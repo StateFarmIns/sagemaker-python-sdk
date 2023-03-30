@@ -292,6 +292,8 @@ class JumpStartModelSpecs(JumpStartDataHolderType):
         "training_dependencies",
         "training_vulnerabilities",
         "deprecated",
+        "metrics",
+        "hosting_prepacked_artifact_key",
     ]
 
     def __init__(self, spec: Dict[str, Any]):
@@ -328,6 +330,10 @@ class JumpStartModelSpecs(JumpStartDataHolderType):
         self.training_dependencies: List[str] = json_obj["training_dependencies"]
         self.training_vulnerabilities: List[str] = json_obj["training_vulnerabilities"]
         self.deprecated: bool = bool(json_obj["deprecated"])
+        self.metrics: Optional[List[Dict[str, str]]] = json_obj.get("metrics", None)
+        self.hosting_prepacked_artifact_key: Optional[str] = json_obj.get(
+            "hosting_prepacked_artifact_key", None
+        )
 
         if self.training_supported:
             self.training_ecr_specs: JumpStartECRSpecs = JumpStartECRSpecs(

@@ -33,6 +33,8 @@ from sagemaker.feature_store.feature_group import (
 )
 from sagemaker.feature_store.inputs import FeatureParameter
 
+from tests.unit import SAGEMAKER_CONFIG_FEATURE_GROUP
+
 
 class PicklableMock(Mock):
     def __reduce__(self):
@@ -51,7 +53,9 @@ def s3_uri():
 
 @pytest.fixture
 def sagemaker_session_mock():
-    return Mock()
+    sagemaker_session_mock = Mock()
+    sagemaker_session_mock.sagemaker_config = {}
+    return sagemaker_session_mock
 
 
 @pytest.fixture
@@ -84,6 +88,61 @@ def create_table_ddl():
         "  INPUTFORMAT 'parquet.hive.DeprecatedParquetInputFormat'\n"
         "  OUTPUTFORMAT 'parquet.hive.DeprecatedParquetOutputFormat'\n"
         "LOCATION 's3://resolved_output_s3_uri'"
+    )
+
+
+def test_feature_group_create_without_role(
+    sagemaker_session_mock, feature_group_dummy_definitions, s3_uri
+):
+    feature_group = FeatureGroup(name="MyFeatureGroup", sagemaker_session=sagemaker_session_mock)
+    feature_group.feature_definitions = feature_group_dummy_definitions
+    with pytest.raises(ValueError):
+        feature_group.create(
+            s3_uri=s3_uri,
+            record_identifier_name="feature1",
+            event_time_feature_name="feature2",
+            enable_online_store=True,
+        )
+
+
+def test_feature_store_create_with_config_injection(
+    sagemaker_session, role_arn, feature_group_dummy_definitions, s3_uri
+):
+
+    sagemaker_session.sagemaker_config = SAGEMAKER_CONFIG_FEATURE_GROUP
+    sagemaker_session.create_feature_group = Mock()
+
+    feature_group = FeatureGroup(name="MyFeatureGroup", sagemaker_session=sagemaker_session)
+    feature_group.feature_definitions = feature_group_dummy_definitions
+    feature_group.create(
+        s3_uri=s3_uri,
+        record_identifier_name="feature1",
+        event_time_feature_name="feature2",
+        enable_online_store=True,
+    )
+    expected_offline_store_kms_key_id = SAGEMAKER_CONFIG_FEATURE_GROUP["SageMaker"]["FeatureGroup"][
+        "OfflineStoreConfig"
+    ]["S3StorageConfig"]["KmsKeyId"]
+    expected_role_arn = SAGEMAKER_CONFIG_FEATURE_GROUP["SageMaker"]["FeatureGroup"]["RoleArn"]
+    expected_online_store_kms_key_id = SAGEMAKER_CONFIG_FEATURE_GROUP["SageMaker"]["FeatureGroup"][
+        "OnlineStoreConfig"
+    ]["SecurityConfig"]["KmsKeyId"]
+    sagemaker_session.create_feature_group.assert_called_with(
+        feature_group_name="MyFeatureGroup",
+        record_identifier_name="feature1",
+        event_time_feature_name="feature2",
+        feature_definitions=[fd.to_dict() for fd in feature_group_dummy_definitions],
+        role_arn=expected_role_arn,
+        description=None,
+        tags=None,
+        online_store_config={
+            "EnableOnlineStore": True,
+            "SecurityConfig": {"KmsKeyId": expected_online_store_kms_key_id},
+        },
+        offline_store_config={
+            "DisableGlueTableCreation": False,
+            "S3StorageConfig": {"S3Uri": s3_uri, "KmsKeyId": expected_offline_store_kms_key_id},
+        },
     )
 
 
@@ -307,8 +366,36 @@ def test_ingest(ingestion_manager_init, sagemaker_session_mock, fs_runtime_clien
 
     ingestion_manager_init.assert_called_once_with(
         feature_group_name="MyGroup",
+        sagemaker_session=sagemaker_session_mock,
         sagemaker_fs_runtime_client_config=fs_runtime_client_config_mock,
         max_workers=10,
+        max_processes=1,
+        profile_name=sagemaker_session_mock.boto_session.profile_name,
+    )
+    mock_ingestion_manager_instance.run.assert_called_once_with(
+        data_frame=df, wait=True, timeout=None
+    )
+
+
+@patch("sagemaker.feature_store.feature_group.IngestionManagerPandas")
+def test_ingest_default(ingestion_manager_init, sagemaker_session_mock):
+    sagemaker_session_mock.sagemaker_featurestore_runtime_client.meta.config = (
+        fs_runtime_client_config_mock
+    )
+    sagemaker_session_mock.boto_session.profile_name = "default"
+
+    feature_group = FeatureGroup(name="MyGroup", sagemaker_session=sagemaker_session_mock)
+    df = pd.DataFrame(dict((f"float{i}", pd.Series([2.0], dtype="float64")) for i in range(300)))
+
+    mock_ingestion_manager_instance = Mock()
+    ingestion_manager_init.return_value = mock_ingestion_manager_instance
+    feature_group.ingest(data_frame=df)
+
+    ingestion_manager_init.assert_called_once_with(
+        feature_group_name="MyGroup",
+        sagemaker_session=sagemaker_session_mock,
+        sagemaker_fs_runtime_client_config=fs_runtime_client_config_mock,
+        max_workers=1,
         max_processes=1,
         profile_name=None,
     )
@@ -334,6 +421,7 @@ def test_ingest_with_profile_name(
 
     ingestion_manager_init.assert_called_once_with(
         feature_group_name="MyGroup",
+        sagemaker_session=sagemaker_session_mock,
         sagemaker_fs_runtime_client_config=fs_runtime_client_config_mock,
         max_workers=10,
         max_processes=1,
@@ -403,6 +491,7 @@ def test_ingestion_manager_run_success():
     df = pd.DataFrame({"float": pd.Series([2.0], dtype="float64")})
     manager = IngestionManagerPandas(
         feature_group_name="MyGroup",
+        sagemaker_session=sagemaker_session_mock,
         sagemaker_fs_runtime_client_config=fs_runtime_client_config_mock,
         max_workers=10,
     )
@@ -421,6 +510,7 @@ def test_ingestion_manager_run_multi_process_with_multi_thread_success(
     df = pd.DataFrame({"float": pd.Series([2.0], dtype="float64")})
     manager = IngestionManagerPandas(
         feature_group_name="MyGroup",
+        sagemaker_session=sagemaker_session_mock,
         sagemaker_fs_runtime_client_config=fs_runtime_client_config_mock,
         max_workers=2,
         max_processes=2,
@@ -436,16 +526,17 @@ def test_ingestion_manager_run_failure():
     df = pd.DataFrame({"float": pd.Series([2.0], dtype="float64")})
     manager = IngestionManagerPandas(
         feature_group_name="MyGroup",
+        sagemaker_session=sagemaker_session_mock,
         sagemaker_fs_runtime_client_config=fs_runtime_client_config_mock,
-        max_workers=1,
+        max_workers=2,
     )
 
     with pytest.raises(IngestionError) as error:
         manager.run(df)
 
     assert "Failed to ingest some data into FeatureGroup MyGroup" in str(error)
-    assert error.value.failed_rows == [1]
-    assert manager.failed_rows == [1]
+    assert error.value.failed_rows == [1, 1]
+    assert manager.failed_rows == [1, 1]
 
 
 @patch(
@@ -456,6 +547,7 @@ def test_ingestion_manager_with_profile_name_run_failure():
     df = pd.DataFrame({"float": pd.Series([2.0], dtype="float64")})
     manager = IngestionManagerPandas(
         feature_group_name="MyGroup",
+        sagemaker_session=sagemaker_session_mock,
         sagemaker_fs_runtime_client_config=fs_runtime_client_config_mock,
         max_workers=1,
         profile_name="non_exist",
@@ -475,6 +567,7 @@ def test_ingestion_manager_run_multi_process_failure():
     df = pd.DataFrame({"float": pd.Series([2.0], dtype="float64")})
     manager = IngestionManagerPandas(
         feature_group_name="MyGroup",
+        sagemaker_session=None,
         sagemaker_fs_runtime_client_config=None,
         max_workers=2,
         max_processes=2,

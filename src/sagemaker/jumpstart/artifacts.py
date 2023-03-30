@@ -12,8 +12,9 @@
 # language governing permissions and limitations under the License.
 """This module contains functions for obtaining JumpStart ECR and S3 URIs."""
 from __future__ import absolute_import
+from copy import deepcopy
 import os
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 from sagemaker import image_uris
 from sagemaker.jumpstart.constants import (
     ENV_VARIABLE_JUMPSTART_MODEL_ARTIFACT_BUCKET_OVERRIDE,
@@ -172,10 +173,10 @@ def _retrieve_image_uri(
 def _retrieve_model_uri(
     model_id: str,
     model_version: str,
-    model_scope: Optional[str],
-    region: Optional[str],
-    tolerate_vulnerable_model: bool,
-    tolerate_deprecated_model: bool,
+    model_scope: Optional[str] = None,
+    region: Optional[str] = None,
+    tolerate_vulnerable_model: bool = False,
+    tolerate_deprecated_model: bool = False,
 ):
     """Retrieves the model artifact S3 URI for the model matching the given arguments.
 
@@ -218,7 +219,11 @@ def _retrieve_model_uri(
     )
 
     if model_scope == JumpStartScriptScope.INFERENCE:
-        model_artifact_key = model_specs.hosting_artifact_key
+        model_artifact_key = (
+            getattr(model_specs, "hosting_prepacked_artifact_key", None)
+            or model_specs.hosting_artifact_key
+        )
+
     elif model_scope == JumpStartScriptScope.TRAINING:
         model_artifact_key = model_specs.training_artifact_key
 
@@ -363,3 +368,32 @@ def _retrieve_default_environment_variables(
     for environment_variable in model_specs.inference_environment_variables:
         default_environment_variables[environment_variable.name] = str(environment_variable.default)
     return default_environment_variables
+
+
+def _retrieve_default_training_metric_definitions(
+    model_id: str,
+    model_version: str,
+    region: Optional[str],
+) -> Optional[List[Dict[str, str]]]:
+    """Retrieves the default training metric definitions for the model.
+
+    Args:
+        model_id (str): JumpStart model ID of the JumpStart model for which to
+            retrieve the default training metric definitions.
+        model_version (str): Version of the JumpStart model for which to retrieve the
+            default training metric definitions.
+        region (Optional[str]): Region for which to retrieve default training metric
+            definitions.
+
+    Returns:
+        list: the default training metric definitions to use for the model or None.
+    """
+
+    if region is None:
+        region = JUMPSTART_DEFAULT_REGION_NAME
+
+    model_specs = jumpstart_accessors.JumpStartModelsAccessor.get_model_specs(
+        region=region, model_id=model_id, version=model_version
+    )
+
+    return deepcopy(model_specs.metrics) if model_specs.metrics else None

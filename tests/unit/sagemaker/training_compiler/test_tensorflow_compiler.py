@@ -85,6 +85,9 @@ def fixture_sagemaker_session():
     session.sagemaker_client.list_tags = Mock(return_value=LIST_TAGS_RESULT)
     session.default_bucket = Mock(name="default_bucket", return_value=BUCKET_NAME)
     session.expand_role = Mock(name="expand_role", return_value=ROLE)
+
+    # For tests which doesn't verify config file injection, operate with empty config
+    session.sagemaker_config = {}
     return session
 
 
@@ -156,10 +159,7 @@ def _create_train_job(framework_version, instance_type, training_compiler_config
 
 class TestUnsupportedConfig:
     def test_cpu_instance(
-        self,
-        cpu_instance_type,
-        tensorflow_training_version,
-        tensorflow_training_py_version,
+        self, cpu_instance_type, tensorflow_training_version, tensorflow_training_py_version
     ):
         with pytest.raises(ValueError):
             TensorFlow(
@@ -192,10 +192,7 @@ class TestUnsupportedConfig:
                 compiler_config=TrainingCompilerConfig(),
             ).fit()
 
-    def test_framework_version(
-        self,
-        tensorflow_training_py_version,
-    ):
+    def test_framework_version_min(self, tensorflow_training_py_version):
         with pytest.raises(ValueError):
             TensorFlow(
                 py_version=tensorflow_training_py_version,
@@ -208,10 +205,34 @@ class TestUnsupportedConfig:
                 compiler_config=TrainingCompilerConfig(),
             ).fit()
 
-    def test_python_2(
-        self,
-        tensorflow_training_version,
-    ):
+    def test_framework_version_max(self, tensorflow_training_py_version):
+        with pytest.raises(ValueError):
+            TensorFlow(
+                py_version=tensorflow_training_py_version,
+                entry_point=SCRIPT_PATH,
+                role=ROLE,
+                instance_count=INSTANCE_COUNT,
+                instance_type=INSTANCE_TYPE,
+                framework_version="2.12",
+                enable_sagemaker_metrics=False,
+                compiler_config=TrainingCompilerConfig(),
+            ).fit()
+
+    def test_mwms(self, tensorflow_training_version, tensorflow_training_py_version):
+        with pytest.raises(ValueError):
+            TensorFlow(
+                py_version=tensorflow_training_py_version,
+                entry_point=SCRIPT_PATH,
+                role=ROLE,
+                instance_count=INSTANCE_COUNT,
+                instance_type=INSTANCE_TYPE,
+                framework_version=tensorflow_training_version,
+                enable_sagemaker_metrics=False,
+                compiler_config=TrainingCompilerConfig(),
+                distribution={"multi_worker_mirrored_strategy": {"enabled": True}},
+            ).fit()
+
+    def test_python_2(self, tensorflow_training_version):
         with pytest.raises(ValueError):
             TensorFlow(
                 py_version="py27",
