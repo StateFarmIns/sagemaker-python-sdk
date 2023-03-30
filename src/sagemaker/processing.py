@@ -1933,8 +1933,9 @@ class FrameworkProcessor(ScriptProcessor):
         if _pipeline_config and _pipeline_config.pipeline_name:
             runproc_file_str = self._generate_framework_script(user_script)
             runproc_file_hash = hash_object(runproc_file_str)
+            print(_pipeline_config)
             s3_uri = (
-                f"s3://{self.sagemaker_session.default_bucket()}/{_pipeline_config.pipeline_name}/"
+                f"s3://sf-shared-ml-discovery-prod-use1-training-data/clm-ares-aiml/alex-test/{_pipeline_config.pipeline_name}/"
                 f"code/{runproc_file_hash}/runproc.sh"
             )
             s3_runproc_sh = S3Uploader.upload_string_as_file_body(

@@ -62,6 +62,7 @@ class Pipeline(Entity):
         pipeline_experiment_config: Optional[PipelineExperimentConfig] = _DEFAULT_EXPERIMENT_CFG,
         steps: Optional[Sequence[Union[Step, StepCollection]]] = None,
         sagemaker_session: Optional[Session] = None,
+        code_location: Optional[str] = None
     ):
         """Initialize a Pipeline
 
@@ -83,6 +84,10 @@ class Pipeline(Entity):
             sagemaker_session (sagemaker.session.Session): Session object that manages interactions
                 with Amazon SageMaker APIs and any other AWS services needed. If not specified, the
                 pipeline creates one using the default AWS configuration chain.
+            code_location (Optional[str]): The S3 prefix URI where Pipeline specific code is stored(default: None). You must not include a trailing slash because
+                a string prepended with a "/" is appended to ``code_location``. The code
+                file uploaded to S3 is 'code_location/job-name/source/sourcedir.tar.gz'.
+                If not specified, the default ``code location`` is 's3://output_bucket/job-name/'.
         """
         self.name = name
         self.parameters = parameters if parameters else []
