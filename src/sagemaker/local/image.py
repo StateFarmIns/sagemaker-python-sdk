@@ -40,7 +40,6 @@ from sagemaker.config.config_schema import CONTAINER_CONFIG, LOCAL
 import sagemaker.local.data
 import sagemaker.local.utils
 import sagemaker.utils
-from sagemaker.utils import custom_extractall_tarfile
 
 CONTAINER_PREFIX = "algo"
 STUDIO_HOST_NAME = "sagemaker-local"
@@ -227,6 +226,16 @@ class _SageMakerContainer(object):
 
         if _ecr_login_if_needed(self.sagemaker_session.boto_session, self.image):
             _pull_image(self.image)
+        # Remove sagemaker-local network, compose_command will fail if an existing network is still around
+        remove_sagemaker_local = ["docker", "network", "rm", STUDIO_HOST_NAME]
+        remove_process = subprocess.Popen(
+            remove_sagemaker_local, stdout=subprocess.PIPE, stderr=subprocess.STDOUT
+        )
+        try:
+            _stream_output(remove_process)
+        except RuntimeError:
+            # Continue even if rm sagemaker-local fails
+            pass
 
         compose_command = self._compose()
         process = subprocess.Popen(
@@ -294,9 +303,9 @@ class _SageMakerContainer(object):
         }
         training_env_vars.update(environment)
         if self.sagemaker_session.s3_resource is not None:
-            training_env_vars[S3_ENDPOINT_URL_ENV_NAME] = (
-                self.sagemaker_session.s3_resource.meta.client._endpoint.host
-            )
+            training_env_vars[
+                S3_ENDPOINT_URL_ENV_NAME
+            ] = self.sagemaker_session.s3_resource.meta.client._endpoint.host
 
         compose_data = self._generate_compose_file(
             "train", additional_volumes=volumes, additional_env_vars=training_env_vars
@@ -687,7 +696,7 @@ class _SageMakerContainer(object):
         for filename in model_data_source.get_file_list():
             if tarfile.is_tarfile(filename):
                 with tarfile.open(filename) as tar:
-                    custom_extractall_tarfile(tar, model_data_source.get_root_dir())
+                    tar.extractall(path=model_data_source.get_root_dir())
 
         volumes.append(_Volume(model_data_source.get_root_dir(), "/opt/ml/model"))
 
@@ -859,9 +868,7 @@ class _SageMakerContainer(object):
         # to setting --runtime=nvidia in the docker commandline.
         if self.instance_type == "local_gpu":
             host_config["deploy"] = {
-                "resources": {
-                    "reservations": {"devices": [{"count": "all", "capabilities": ["gpu"]}]}
-                }
+                "resources": {"reservations": {"devices": [{"capabilities": ["gpu"]}]}}
             }
 
         if not self.is_studio and command == "serve":
